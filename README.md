@@ -3,7 +3,7 @@
 
 知味小厨（ChefGPT）是一款基于 RAG（Retrieval-Augmented Generation，检索增强生成）技术构建的智能菜谱问答系统。用户可以用自然语言提问，系统会从结构化与非结构化的菜谱文档中精准检索并生成答案，实现对话式、上下文感知的美食知识问答体验。
 
-项目目标是打造一个 既能回答烹饪问题、又能理解用户语境的智能厨师助手，未来可拓展至个性化菜谱推荐、营养分析、多语言支持等功能。
+项目目标是打造一个既能回答烹饪问题、又能理解用户语境的智能厨师助手，未来可拓展至个性化菜谱推荐、营养分析、多语言支持等功能。
 
 🌟 功能亮点：
 
@@ -18,7 +18,7 @@
 ## 项目参考 & 致谢：
 
 https://github.com/Anduin2017/HowToCook     
-https://github.com/datawhalechina/all-in-rag/tree/main
+
 
 ## 📁 项目结构 | Project Structure
 
