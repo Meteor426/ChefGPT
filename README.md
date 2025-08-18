@@ -1,4 +1,4 @@
-🧾 项目简介｜Project Overview
+## 🧾 项目简介｜Project Overview
 📌 中文简介：知味小厨（ChefGPT）
 
 知味小厨（ChefGPT）是一款基于 RAG（Retrieval-Augmented Generation，检索增强生成）技术构建的智能菜谱问答系统。用户可以用自然语言提问，系统会从结构化与非结构化的菜谱文档中精准检索并生成答案，实现对话式、上下文感知的美食知识问答体验。
