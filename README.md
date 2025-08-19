@@ -44,7 +44,7 @@ https://github.com/Anduin2017/HowToCook
 ### 1️⃣ 克隆项目并进入目录
 
 ```bash
-git clone https://github.com/your-username/ChefGPT.git
+git clone https://github.com/Meteor426/ChefGPT.git
 cd ChefGPT
 ```
 

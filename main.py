@@ -148,13 +148,9 @@ class RAGSystem:
         if router_type == 'chitchat':
             print("闲聊类问题，不触发RAG检索\n")
             return self.generation_module.generate_chitchat_answer(question, history)
-        #根据类型来判断是否需要重写query
-        if router_type == 'list':
-            print("list类型问题，不需要重写\n")
-            query = question
-        else:
-            query = self.generation_module.query_rewrite(question,history)
-            print(f"问题已经自动智能重写为:{query}\n")
+        #统一进行重写query
+        query = self.generation_module.query_rewrite(question,history)
+        print(f"问题已经自动智能重写为:{query}\n")
         
         #利用混合检索进行检索
         relevant_chunks = self.retrieval_module.hybrid_search(query)
