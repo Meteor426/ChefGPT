@@ -62,7 +62,7 @@ class RAGSystem:
         logger.info("正在加载集成模块.....")
         self.generation_module = GenerationIntegrationModule(self.config.model_name,
                                                             self.config.temperature,
-                                                            self.config.max_tokens)
+                                                            self.config.max_tokens,self.config.history_window_size)
         logger.info("...系统已经加载完成...")
 
     
@@ -111,12 +111,13 @@ class RAGSystem:
         self.retrieval_module = RetrievalOptimizationModule(vectorstore,chunks)
         logger.info("RetrievalOptimizationModule 初始化完成")
 
-    def ask_question(self,question:str,stream:bool = False):
+    def ask_question(self,question:str,stream:bool = False,history:List[dict] = None):
         '''
         回答用户问题的函数
         Args:
             question:用户的问题
             stream:是否是流式输出
+            history:回答上下文
         Returns:
             LLM回答
         '''
@@ -127,15 +128,32 @@ class RAGSystem:
         
         print(f"用户问题： {question} \n")
 
+        #为xxb添加彩蛋
+        if question.strip().lower() == 'kyy':
+            print(
+            "\n🌸 亲爱的 KYY 🌸\n"
+            "在这个知识系统中，有一个彩蛋只为你而生。\n\n"
+            "💖 你是特别的、可爱的、值得被世界温柔以待的人。\n"
+            "🍽️ 无论你想吃什么，我都会尽力帮你找到最棒的做法。\n"
+            "☀️ 愿你每天都有好心情，好胃口，还有一点点小幸运～\n\n"
+            "💌 —— 来自你的专属美食 AI\n")
+            return None
+
+        #没有历史就初始化
+        history = history or []
+
         #查询路由
         router_type = self.generation_module.query_router(question)
-
+        #如果是闲聊的话
+        if router_type == 'chitchat':
+            print("闲聊类问题，不触发RAG检索\n")
+            return self.generation_module.generate_chitchat_answer(question, history)
         #根据类型来判断是否需要重写query
         if router_type == 'list':
             print("list类型问题，不需要重写\n")
             query = question
         else:
-            query = self.generation_module.query_rewrite(question)
+            query = self.generation_module.query_rewrite(question,history)
             print(f"问题已经自动智能重写为:{query}\n")
         
         #利用混合检索进行检索
@@ -182,18 +200,19 @@ class RAGSystem:
             #返回回答器
             return self.generation_module.generate_list_answer(query,relevant_docs)
         elif router_type == 'detail':
-            return self.generation_module.generate_detail_answer(query,relevant_docs)
+            return self.generation_module.generate_detail_answer(query,relevant_docs,history)
         else:
-            return self.generation_module.generate_general_answer(query,relevant_docs)
+            return self.generation_module.generate_general_answer(query,relevant_docs,history)
         
     def run_interactive(self):
         '''
         构建一个交互式系统
         '''
         print("=" * 60)
-        print("🍽️  尝尝咸淡RAG系统 - 交互式问答  🍽️")
+        print("🍳  欢迎来到 知味小厨 （ChefGPT） 🍳".center(60))
         print("=" * 60)
-        print("💡 解决您的选择困难症，告别'今天吃什么'的世纪难题！")
+        print("🤖 基于 RAG 技术的智能菜谱问答系统，助您轻松掌厨！".center(60))
+        print("=" * 60)
 
         #初始化系统
         self.initial_system()
@@ -202,14 +221,29 @@ class RAGSystem:
         #构建知识库
         self.build_knowledge_base()
 
+        #初始化对话历史
+        history = []
+
         print("\n交互式问答 (输入'退出'结束):")
         
         while True:
             try:
                 user_input = input("\n您的问题: ").strip()
-                if user_input == '退出':
+                if user_input.lower() in [ '退出','exit','quit']:
+                    print("👋 感谢使用 ChefGPT，再见！")
                     break
-                answer = self.ask_question(user_input, stream=False)
+
+                #获取回答
+                answer = self.ask_question(user_input, stream=False,history = history)
+                #跳过彩蛋
+                if not  answer:
+                    continue
+
+                #添加用户信息到历史
+                history.append({'role':'user','content':user_input})
+                #添加系统消息到历史
+                history.append({'role':'assistant','content':answer})
+
                 print(f"{answer}\n")
             except KeyboardInterrupt:
                 break

@@ -8,6 +8,7 @@ from typing import List
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate,PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain.schema import AIMessage, HumanMessage, SystemMessage
 #from langchain_core.runnables import RunnablePassthrough
 logger = logging.getLogger(__name__)
 
@@ -15,15 +16,17 @@ class GenerationIntegrationModule:
     '''
     集成LLM与回答生成
     '''
-    def __init__(self,model_name:str,temperature:float = 0,max_tokens:int = 2048):
+    def __init__(self,model_name:str,temperature:float = 0,max_tokens:int = 2048,history_window_size:int = 8):
         '''
         初始化
         '''
         self.model_name = model_name
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.history_window_size = 8
         self.llm = None
         self._setup_llm()
+
 
     def _setup_llm(self):
         '''
@@ -43,38 +46,21 @@ class GenerationIntegrationModule:
         )
         logger.info(f"LLM加载完成")
     
-    def generate_basic_answer(self,query:str,context:List[Document])->str:
+    def generate_chitchat_answer(self,query:str,context:List[Document],history = None)->str:
         '''
-        根据检索到的上下文,让LLM生成基础回答
-        Args:
-            query:用户查询
-            context:检索到的上下文
-        Returns:
-            LLM回答
+        闲聊类问题（不需要检索）直接用 LLM 回答
         '''
-        context = self._build_context(context)
-        prompt = ChatPromptTemplate.from_template(
-'''
-你是一位专业的烹饪助手。请根据以下食谱信息回答用户的问题。
+        messages = [SystemMessage(content="你是一个亲切的美食助手，可以友好地与用户闲聊。")]
+        if history:
+            for msg in history[-self.history_window_size:]:
+                if msg["role"] == "user":
+                    messages.append(HumanMessage(content=msg["content"]))
+                elif msg["role"] == "assistant":
+                    messages.append(AIMessage(content=msg["content"]))
+        messages.append(HumanMessage(content=query))
 
-用户问题: {question}
-
-相关食谱信息:
-{context}
-
-请提供详细、实用的回答。如果信息不足，请诚实说明。
-
-回答:         
-'''
-        )
-        #构建链
-        chain = (
-            prompt
-            | self.llm
-            | StrOutputParser()
-        )
-        response = chain.invoke({'question':query,'context':context})
-        return response
+        response = self.llm.invoke(messages)
+        return response.content
     
     def _build_context(self,context:List[Document],max_length = 2000)->str:
         '''
@@ -112,48 +98,56 @@ class GenerationIntegrationModule:
             current_length += len(doc_context)
         return "\n" + '='*50 + '\n'+ '\n'.join(context_parts)  #换行后，每一行放一条文档数据
 
-    def query_rewrite(self,query:str)->str:
+    def query_rewrite(self,query:str,history = None)->str:
         '''
         由大模型来判断是否需要重写质量不高的query
         '''
         prompt = PromptTemplate.from_template(
-'''
-你是一个智能查询分析助手。请分析用户的查询，判断是否需要重写以提高食谱搜索效果。
+        '''
+        你是一个智能查询重写助手，负责将用户输入的查询在必要时重写为更适合菜谱检索的表达。
 
-原始查询: {query}
+        === 当前对话历史（用于判断上下文指代） ===
+        {history}
 
-分析规则：
-1. **具体明确的查询**（直接返回原查询）：
-   - 包含具体菜品名称：如"宫保鸡丁怎么做"、"红烧肉的制作方法"
-   - 明确的制作询问：如"蛋炒饭需要什么食材"、"糖醋排骨的步骤"
-   - 具体的烹饪技巧：如"如何炒菜不粘锅"、"怎样调制糖醋汁"
+        === 当前用户查询 ===
+        {query}
 
-2. **模糊不清的查询**（需要重写）：
-   - 过于宽泛：如"做菜"、"有什么好吃的"、"推荐个菜"
-   - 缺乏具体信息：如"川菜"、"素菜"、"简单的"
-   - 口语化表达：如"想吃点什么"、"有饮品推荐吗"
+        === 判断与重写规则 ===
 
-重写原则：
-- 保持原意不变
-- 增加相关烹饪术语
-- 优先推荐简单易做的
-- 保持简洁性
+        1. ✅ **具体明确的查询（不重写）**
+        - 包含具体菜品名称：如“宫保鸡丁怎么做”、“红烧肉的做法”
+        - 明确步骤/技巧提问：如“糖醋排骨用什么调料”、“如何炒菜不粘锅”
 
-示例：
-- "做菜" → "简单易做的家常菜谱"
-- "有饮品推荐吗" → "简单饮品制作方法"
-- "推荐个菜" → "简单家常菜推荐"
-- "川菜" → "经典川菜菜谱"
-- "宫保鸡丁怎么做" → "宫保鸡丁怎么做"（保持原查询）
-- "红烧肉需要什么食材" → "红烧肉需要什么食材"（保持原查询）
+        2. ❌ **模糊或宽泛的查询（应重写）**
+        - 不含菜名：如“做菜”、“推荐个菜”、“简单的”
+        - 无具体目标：如“想吃点什么”、“来点素的”
 
-请输出最终查询（如果不需要重写就返回原查询）:
-'''
+        3. 🔁 **指代型查询（需上下文重写）**
+        - 包含“这个”、“它”、“第一个”等指代词
+        - 如果历史中出现了推荐菜品列表（如“推荐了水煮鱼、红烧肉”），则用对应菜名替换指代词
+        - 若历史为空或菜名无法判断，保留原查询不做修改
+
+        === 重写原则 ===
+        - 增强语义清晰度，方便菜谱系统理解
+        - 保留用户原意，不引入不相关信息
+        - 优先推荐家常菜、易做菜，风格清晰
+
+        === 示例 ===
+        - “做菜” → “简单易做的家常菜谱”
+        - “有饮品推荐吗” → “简单饮品制作方法”
+        - “川菜” → “经典川菜菜谱”
+        - “宫保鸡丁怎么做” → “宫保鸡丁怎么做”
+        - “第一个怎么做” + 上文提到“水煮鱼、红烧肉” → “水煮鱼怎么做”
+        - “它需要什么调料” + 上文提到“推荐了麻辣香锅” → “麻辣香锅需要什么调料”
+
+        === 输出要求 ===
+        请输出最终用于菜谱检索的查询内容（如无需改写则原样返回）：
+        '''
         )
         #构建链
         chain = (prompt | self.llm | StrOutputParser())
-
-        response = chain.invoke({'query':query}).strip()  #得到输出并移除首尾的空格
+        history = self._format_history(history)
+        response = chain.invoke({'query':query,'history':history}).strip()  #得到输出并移除首尾的空格
 
         if response != query:
             logger.info(f"查询已改写：'{query}' -> '{response}'")
@@ -162,6 +156,18 @@ class GenerationIntegrationModule:
 
         return response
 
+    def _format_history(self,history: List[dict]) -> str:
+        '''
+        将对话历史格式化为字符串
+        '''
+        if not history:
+            return "（无）"
+        formatted = ""
+        for msg in history[-4:]:  # 最多保留最近 4 条
+            role = "用户" if msg["role"] == "user" else "ChefGPT"
+            formatted += f"{role}：{msg['content']}\n"
+        return formatted.strip()
+
     def query_router(self,query:str)->str:
         '''
         实现多查询功能-查询路由
@@ -169,26 +175,28 @@ class GenerationIntegrationModule:
         Args:
             query:查询
         Returns:
-            路由类型：('list', 'detail', 'general')
+            路由类型：('list', 'detail', 'general','chitchat)
         '''
         prompt = ChatPromptTemplate.from_template(
             '''
             根据用户的问题，将其分类为以下三种类型之一：
 
-1. 'list' - 用户想要获取菜品列表或推荐，只需要菜名
-   例如：推荐几个素菜、有什么川菜、给我3个简单的菜
+        1. 'list' - 用户想要获取菜品列表或推荐，只需要菜名
+        例如：推荐几个素菜、有什么川菜、给我3个简单的菜
 
-2. 'detail' - 用户想要具体的制作方法或详细信息
-   例如：宫保鸡丁怎么做、制作步骤、需要什么食材
+        2. 'detail' - 用户想要具体的制作方法或详细信息
+        例如：宫保鸡丁怎么做、制作步骤、需要什么食材
 
-3. 'general' - 其他一般性问题
-   例如：什么是川菜、制作技巧、营养价值
+        3. 'general' - 其他一般性知识问题
+        例如：什么是川菜、制作技巧、营养价值
 
-请只返回分类结果：list、detail 或 general
+        4. 'chitchat' - 闲聊问候类问题（如“你好”“谢谢”“你是谁”）
 
-用户问题: {query}
+        请只返回分类结果：list、detail、 general或者chitchat
 
-分类结果:'''
+        用户问题: {query}
+
+        分类结果:'''
         )
 
         chain = (prompt | self.llm | StrOutputParser())
@@ -196,7 +204,7 @@ class GenerationIntegrationModule:
         response = chain.invoke({'query':query}).strip().lower()
 
         #检查分类有效性
-        if response in ['list', 'detail', 'general']:
+        if response in ['list', 'detail', 'general','chitchat']:
             return response
         else:
             return 'general'
@@ -228,53 +236,67 @@ class GenerationIntegrationModule:
         else:
             return f"为你推荐以下菜品 : \n" + "\n".join( [f"{i},{name}" for i,name in enumerate(dishes[:3])] ) + f"\n\n 还有其他{len(dishes) - 3} 道菜品可供选择"
                 
-    def generate_detail_answer(self,query:str,context:List[Document]):
+    def generate_detail_answer(self,query:str,context:List[Document],history:List[dict] = None):
         '''
         detail类型的回答器
         Args:
             query:查询
             context:上下文
+            history:对话历史
         Returns:
             LLM回答
         '''
-        context = self._build_context(context)
+        #拼接上下文
+        context = self._build_context(context) 
         
-        prompt = ChatPromptTemplate.from_template(
-        '''你是一位专业的烹饪导师。请根据食谱信息，为用户提供详细的分步骤指导。
+        system_prompt = '''你是一位专业的烹饪导师。请根据食谱信息，为用户提供详细的分步骤指导。
 
-用户问题: {question}
+        用户问题: {question}
 
-相关食谱信息:
-{context}
+        相关食谱信息:
+        {context}
 
-请灵活组织回答，建议包含以下部分（可根据实际内容调整）：
+        请灵活组织回答，建议包含以下部分（可根据实际内容调整）：
 
-## 🥘 菜品介绍
-[简要介绍菜品特点和难度]
+        ## 🥘 菜品介绍
+        [简要介绍菜品特点和难度]
 
-## 🛒 所需食材
-[列出主要食材和用量]
+        ## 🛒 所需食材
+        [列出主要食材和用量]
 
-## 👨‍🍳 制作步骤
-[详细的分步骤说明，每步包含具体操作和大概所需时间]
+        ## 👨‍🍳 制作步骤
+        [详细的分步骤说明，每步包含具体操作和大概所需时间]
 
-## 💡 制作技巧
-[仅在有实用技巧时包含。如果原文的"附加内容"与烹饪无关或为空，可以基于制作步骤总结关键要点，或者完全省略此部分]
+        ## 💡 制作技巧
+        [仅在有实用技巧时包含。如果原文的"附加内容"与烹饪无关或为空，可以基于制作步骤总结关键要点，或者完全省略此部分]
 
-注意：
-- 根据实际内容灵活调整结构
-- 不要强行填充无关内容
-- 重点突出实用性和可操作性
+        注意：
+        - 根据实际内容灵活调整结构
+        - 不要强行填充无关内容
+        - 重点突出实用性和可操作性
 
-回答:'''
-        )
-        chain = (prompt | self.llm | StrOutputParser())
-        input = {'question':query,'context':context}
+        回答:'''
+        #构造历史消息
 
-        response = chain.invoke(input)
-        return response
+        #添加系统消息
+        message = [SystemMessage(content = system_prompt)]
+        if history:
+            for msg in history[-self.history_window_size:]:
+                if msg['role'] == 'user':
+                    message.append(HumanMessage(content=msg['content']))
+                elif msg['role'] == 'assistant':
+                    message.append(AIMessage(content=msg['content']))
 
-    def generate_general_answer(self,query:str,context:List[Document]):
+        #构造本轮对话
+        current_input = f"用户问题：{query}\n\n相关食谱信息为:{context}"
+        #添加进历史消息
+        message.append(HumanMessage(content=current_input))
+
+        #获取回答
+        response = self.llm.invoke(message)
+        return response.content
+
+    def generate_general_answer(self,query:str,context:List[Document],history:List[dict] = None):
         '''
         general类型的生成器
         Args:
@@ -282,22 +304,34 @@ class GenerationIntegrationModule:
             context:上下文
         '''
         context = self._build_context(context)
-        prompt = ChatPromptTemplate.from_template(
-            '''
-你是一位专业的烹饪助手。请根据以下食谱信息回答用户的问题。
+        system_prompt = '''
+        你是一位专业的烹饪助手。请根据以下食谱信息回答用户的问题。
 
-用户问题: {question}
+        用户问题: {question}
 
-相关食谱信息:
-{context}
+        相关食谱信息:
+        {context}
 
-请提供详细、实用的回答。如果信息不足，请诚实说明。
+        请提供详细、实用的回答。如果信息不足，请诚实说明。
 
-回答:'''
-        )
-        chain = (prompt | self.llm | StrOutputParser())
+        回答:'''
 
-        input = {'question':query,'context':context}
+        #构造历史消息
 
-        response = chain.invoke(input)
-        return response
+        #添加系统消息
+        message = [SystemMessage(content = system_prompt)]
+        if history:
+            for msg in history[-self.history_window_size:]:
+                if msg['role'] == 'user':
+                    message.append(HumanMessage(content=msg['content']))
+                elif msg['role'] == 'assistant':
+                    message.append(AIMessage(content=msg['content']))
+
+        #构造本轮对话
+        current_input = f"用户问题：{query}\n\n相关食谱信息为:{context}"
+        #添加进历史消息
+        message.append(HumanMessage(content=current_input))
+
+        #获取回答
+        response = self.llm.invoke(message)
+        return response.content

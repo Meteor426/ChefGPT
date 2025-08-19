@@ -25,6 +25,9 @@ class RAGConfig:
     temperature:float = 0.1
     max_tokens:int = 2048
 
+    #模型生成上下文大小
+    history_window_size = 8
+
     @classmethod
     def from_dict(cls,config_dict:Dict[str,Any])->'RAGConfig':
         #从字典创建配置对象
@@ -39,7 +42,8 @@ class RAGConfig:
             'llm_model': self.model_name,
             'top_k': self.top_k,
             'temperature': self.temperature,
-            'max_tokens': self.max_tokens
+            'max_tokens': self.max_tokens,
+            'history_window_size':self.history_window_size
         }
 
 #配置默认配置
